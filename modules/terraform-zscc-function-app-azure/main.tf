@@ -216,6 +216,10 @@ resource "azurerm_private_endpoint" "storage_blob" {
     subresource_names              = ["blob"]
   }
 
+  lifecycle {
+    ignore_changes = [private_dns_zone_group]
+  }
+
   tags = var.global_tags
 }
 
@@ -231,6 +235,10 @@ resource "azurerm_private_endpoint" "storage_file" {
     private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
     is_manual_connection           = false
     subresource_names              = ["file"]
+  }
+
+  lifecycle {
+    ignore_changes = [private_dns_zone_group]
   }
 
   tags = var.global_tags
