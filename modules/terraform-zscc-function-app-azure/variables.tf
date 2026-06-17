@@ -122,3 +122,9 @@ variable "path_to_scripts" {
   description = "Path to script_directory"
   default     = ""
 }
+
+variable "storage_private_endpoint_subnet_id" {
+  type        = string
+  description = "Subnet ID where storage account private endpoints will be created"
+}
+
