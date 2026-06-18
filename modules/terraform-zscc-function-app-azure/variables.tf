@@ -123,6 +123,11 @@ variable "path_to_scripts" {
   default     = ""
 }
 
+variable "storage_private_endpoint_subnet_id" {
+  type        = string
+  description = "Subnet ID where storage account private endpoints will be created"
+}
+
 variable "asp_sku_name" {
   type        = string
   description = "SKU Name for the App Service Plan. Recommended Y1 (flex consumption) for function app unless not supported by Azure region"
