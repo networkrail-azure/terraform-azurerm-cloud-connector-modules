@@ -138,6 +138,12 @@ variable "zones" {
   }
 }
 
+variable "multi_zone_vmss_enabled" {
+  type        = bool
+  description = "When true and zones are supported, create a single VMSS spanning all configured zones with zone balancing enabled."
+  default     = false
+}
+
 variable "managed_identity_id" {
   type        = string
   description = "ID of the User Managed Identity assigned to Cloud Connector VM"

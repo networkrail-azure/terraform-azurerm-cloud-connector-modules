@@ -1,17 +1,23 @@
 ################################################################################
 # Create Cloud Connector VMSS
 ################################################################################
+locals {
+  use_multi_zone = local.zones_supported && var.multi_zone_vmss_enabled
+  vmss_count     = local.use_multi_zone ? 1 : (local.zones_supported ? length(var.zones) : 1)
+  autoscale_tag  = coalesce(var.resource_tag, "default")
+}
+
 # Create VMSS
 resource "azurerm_orchestrated_virtual_machine_scale_set" "cc_vmss" {
-  count                       = local.zones_supported ? length(var.zones) : 1
+  count                       = local.vmss_count
   name                        = "${var.name_prefix}-ccvmss-${count.index + 1}-${var.resource_tag}"
   location                    = var.location
   resource_group_name         = var.resource_group
   platform_fault_domain_count = var.fault_domain_count
   sku_name                    = var.ccvm_instance_type
   encryption_at_host_enabled  = var.encryption_at_host_enabled
-  zones                       = local.zones_supported ? [element(var.zones, count.index)] : null
-  zone_balance                = false
+  zones                       = local.zones_supported ? (local.use_multi_zone ? var.zones : [element(var.zones, count.index)]) : null
+  zone_balance                = local.use_multi_zone
   user_data_base64            = base64encode(var.user_data)
   termination_notification {
     enabled = true
@@ -26,7 +32,7 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "cc_vmss" {
     ip_configuration {
       name      = "${var.name_prefix}-ccvmss-mgmt-nic-conf-${var.resource_tag}"
       primary   = true
-      subnet_id = element(var.mgmt_subnet_id, count.index)
+      subnet_id = local.use_multi_zone ? element(var.mgmt_subnet_id, 0) : element(var.mgmt_subnet_id, count.index)
     }
   }
 
@@ -39,7 +45,7 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "cc_vmss" {
     ip_configuration {
       name                                   = "${var.name_prefix}-ccvmss-fwd-nic-conf-${var.resource_tag}"
       primary                                = true
-      subnet_id                              = element(var.service_subnet_id, count.index)
+      subnet_id                              = local.use_multi_zone ? element(var.service_subnet_id, 0) : element(var.service_subnet_id, count.index)
       load_balancer_backend_address_pool_ids = [var.backend_address_pool]
     }
   }
@@ -99,7 +105,7 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "cc_vmss" {
 # Create scaleset profiles and thresholds
 resource "azurerm_monitor_autoscale_setting" "vmss_autoscale_setting" {
   count               = length(azurerm_orchestrated_virtual_machine_scale_set.cc_vmss[*].id)
-  name                = "custom-scale-rule-az-${count.index + 1}"
+  name                = "custom-scale-rule-${local.autoscale_tag}-az-${count.index + 1}"
   resource_group_name = var.resource_group
   location            = var.location
   target_resource_id  = element(azurerm_orchestrated_virtual_machine_scale_set.cc_vmss[*].id, count.index)
