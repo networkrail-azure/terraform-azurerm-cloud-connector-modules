@@ -99,7 +99,7 @@ resource "azurerm_orchestrated_virtual_machine_scale_set" "cc_vmss" {
 # Create scaleset profiles and thresholds
 resource "azurerm_monitor_autoscale_setting" "vmss_autoscale_setting" {
   count               = length(azurerm_orchestrated_virtual_machine_scale_set.cc_vmss[*].id)
-  name                = "custom-scale-rule-az-${count.index + 1}"
+  name                = "custom-scale-rule-${azurerm_orchestrated_virtual_machine_scale_set.cc_vmss[count.index].name}"
   resource_group_name = var.resource_group
   location            = var.location
   target_resource_id  = element(azurerm_orchestrated_virtual_machine_scale_set.cc_vmss[*].id, count.index)
