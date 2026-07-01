@@ -159,6 +159,7 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app" {
   lifecycle {
     ignore_changes = [
       app_settings["APPLICATIONINSIGHTS_CONNECTION_STRING"],
+      tags["hidden-link: /app-insights-resource-id"],
     ]
   }
 
@@ -197,6 +198,9 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app_with_manual_sync" 
   lifecycle {
     ignore_changes = [
       app_settings["APPLICATIONINSIGHTS_CONNECTION_STRING"],
+      # Azure automatically adds this tag to link the App Insights resource to
+      # the Function App. Ignore it so Terraform does not try to remove it.
+      tags["hidden-link: /app-insights-resource-id"],
     ]
   }
 
