@@ -9,13 +9,13 @@ data "azurerm_subscription" "current" {
 ################################################################################
 # Create Storage Account to store Function App
 resource "azurerm_storage_account" "cc_function_storage_account" {
-  count                    = var.existing_storage_account ? 0 : 1
-  name                     = "stccvmss${var.resource_tag}"
-  resource_group_name      = var.resource_group
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  public_network_access_enabled = false
+  count                           = var.existing_storage_account ? 0 : 1
+  name                            = "stccvmss${var.resource_tag}"
+  resource_group_name             = var.resource_group
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  public_network_access_enabled   = false
   allow_nested_items_to_be_public = false
 
   tags = var.global_tags
@@ -68,10 +68,48 @@ resource "azurerm_log_analytics_workspace" "vmss_orchestration_log_analytics_wor
 }
 
 locals {
-  storage_account_name       = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].name : azurerm_storage_account.cc_function_storage_account[0].name
-  storage_account_id         = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].id : azurerm_storage_account.cc_function_storage_account[0].id
-  storage_account_access_key = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].primary_access_key : azurerm_storage_account.cc_function_storage_account[0].primary_access_key
-  log_analytics_workspace_id = var.existing_log_analytics_workspace ? var.existing_log_analytics_workspace_id : azurerm_log_analytics_workspace.vmss_orchestration_log_analytics_workspace[0].id
+  storage_account_name                      = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].name : azurerm_storage_account.cc_function_storage_account[0].name
+  storage_account_id                        = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].id : azurerm_storage_account.cc_function_storage_account[0].id
+  storage_account_access_key                = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].primary_access_key : azurerm_storage_account.cc_function_storage_account[0].primary_access_key
+  storage_account_primary_connection_string = var.existing_storage_account ? data.azurerm_storage_account.existing_storage_account[0].primary_connection_string : azurerm_storage_account.cc_function_storage_account[0].primary_connection_string
+  log_analytics_workspace_id                = var.existing_log_analytics_workspace ? var.existing_log_analytics_workspace_id : azurerm_log_analytics_workspace.vmss_orchestration_log_analytics_workspace[0].id
+
+  # Base application settings shared by both Function App variants.
+  function_app_base_settings = {
+    "SUBSCRIPTION_ID"                              = data.azurerm_subscription.current.id
+    "MANAGED_IDENTITY"                             = var.managed_identity_client_id
+    "RESOURCE_GROUP"                               = var.resource_group
+    "VMSS_NAME"                                    = jsonencode(var.vmss_names)
+    "TERMINATE_UNHEALTHY_INSTANCES"                = var.terminate_unhealthy_instances
+    "VAULT_URL"                                    = var.azure_vault_url
+    "CC_URL"                                       = var.cc_vm_prov_url
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"        = azurerm_application_insights.vmss_orchestration_app_insights.connection_string
+    "ApplicationInsightsAgent_EXTENSION_VERSION"   = "~3"
+    "XDT_MicrosoftApplicationInsights_Mode"        = "recommended"
+    "WEBSITE_RUN_FROM_PACKAGE"                     = var.upload_function_app_zip ? azurerm_storage_blob.cc_function_storage_blob[0].url : var.zscaler_cc_function_public_url
+    "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID" = var.managed_identity_id
+  }
+
+  # When the backing Storage account is private-only, route the content file
+  # share over the integrated VNet and pin the share explicitly.
+  function_app_content_settings = var.content_over_vnet_enabled ? {
+    "WEBSITE_CONTENTOVERVNET"                  = "1"
+    "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING" = local.storage_account_primary_connection_string
+    "WEBSITE_CONTENTSHARE"                     = lower("${var.name_prefix}-ccvmss-${var.resource_tag}-content")
+  } : {}
+
+  # Optional custom DNS servers (e.g. a hub private DNS resolver) so the app
+  # can resolve privatelink records to private endpoint IPs.
+  function_app_dns_settings = merge(
+    length(var.function_app_dns_servers) > 0 ? { "WEBSITE_DNS_SERVER" = var.function_app_dns_servers[0] } : {},
+    length(var.function_app_dns_servers) > 1 ? { "WEBSITE_DNS_ALT_SERVER" = var.function_app_dns_servers[1] } : {},
+  )
+
+  function_app_settings = merge(
+    local.function_app_base_settings,
+    local.function_app_content_settings,
+    local.function_app_dns_settings,
+  )
 }
 
 # Create Application Insights resource
@@ -99,6 +137,7 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app" {
   storage_account_access_key    = local.storage_account_access_key
   service_plan_id               = azurerm_service_plan.vmss_orchestration_app_service_plan.id
   public_network_access_enabled = false
+  virtual_network_subnet_id     = var.function_app_subnet_id
 
   https_only = true
 
@@ -107,26 +146,14 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app" {
     identity_ids = [var.managed_identity_id]
   }
 
-  app_settings = {
-    "SUBSCRIPTION_ID"                              = data.azurerm_subscription.current.id
-    "MANAGED_IDENTITY"                             = var.managed_identity_client_id
-    "RESOURCE_GROUP"                               = var.resource_group
-    "VMSS_NAME"                                    = jsonencode(var.vmss_names)
-    "TERMINATE_UNHEALTHY_INSTANCES"                = var.terminate_unhealthy_instances
-    "VAULT_URL"                                    = var.azure_vault_url
-    "CC_URL"                                       = var.cc_vm_prov_url
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"        = azurerm_application_insights.vmss_orchestration_app_insights.connection_string
-    "ApplicationInsightsAgent_EXTENSION_VERSION"   = "~3"
-    "XDT_MicrosoftApplicationInsights_Mode"        = "recommended"
-    "WEBSITE_RUN_FROM_PACKAGE"                     = var.upload_function_app_zip ? azurerm_storage_blob.cc_function_storage_blob[0].url : var.zscaler_cc_function_public_url
-    "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID" = var.managed_identity_id
-  }
+  app_settings = local.function_app_settings
 
   site_config {
     application_stack {
       python_version = "3.11"
     }
     application_insights_connection_string = azurerm_application_insights.vmss_orchestration_app_insights.connection_string
+    vnet_route_all_enabled                 = var.vnet_route_all_enabled
   }
 
   lifecycle {
@@ -148,6 +175,7 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app_with_manual_sync" 
   storage_account_access_key    = local.storage_account_access_key
   service_plan_id               = azurerm_service_plan.vmss_orchestration_app_service_plan.id
   public_network_access_enabled = false
+  virtual_network_subnet_id     = var.function_app_subnet_id
 
   https_only = true
 
@@ -156,26 +184,14 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app_with_manual_sync" 
     identity_ids = [var.managed_identity_id]
   }
 
-  app_settings = {
-    "SUBSCRIPTION_ID"                              = data.azurerm_subscription.current.id
-    "MANAGED_IDENTITY"                             = var.managed_identity_client_id
-    "RESOURCE_GROUP"                               = var.resource_group
-    "VMSS_NAME"                                    = jsonencode(var.vmss_names)
-    "TERMINATE_UNHEALTHY_INSTANCES"                = var.terminate_unhealthy_instances
-    "VAULT_URL"                                    = var.azure_vault_url
-    "CC_URL"                                       = var.cc_vm_prov_url
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"        = azurerm_application_insights.vmss_orchestration_app_insights.connection_string
-    "ApplicationInsightsAgent_EXTENSION_VERSION"   = "~3"
-    "XDT_MicrosoftApplicationInsights_Mode"        = "recommended"
-    "WEBSITE_RUN_FROM_PACKAGE"                     = var.upload_function_app_zip ? azurerm_storage_blob.cc_function_storage_blob[0].url : var.zscaler_cc_function_public_url
-    "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID" = var.managed_identity_id
-  }
+  app_settings = local.function_app_settings
 
   site_config {
     application_stack {
       python_version = "3.11"
     }
     application_insights_connection_string = azurerm_application_insights.vmss_orchestration_app_insights.connection_string
+    vnet_route_all_enabled                 = var.vnet_route_all_enabled
   }
 
   lifecycle {
@@ -235,6 +251,48 @@ resource "azurerm_private_endpoint" "storage_file" {
     private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
     is_manual_connection           = false
     subresource_names              = ["file"]
+  }
+
+  lifecycle {
+    ignore_changes = [private_dns_zone_group]
+  }
+
+  tags = var.global_tags
+}
+
+resource "azurerm_private_endpoint" "storage_queue" {
+  count               = var.existing_storage_account ? 0 : 1
+  name                = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-queue-pe"
+  location            = var.location
+  resource_group_name = var.resource_group
+  subnet_id           = var.storage_private_endpoint_subnet_id
+
+  private_service_connection {
+    name                           = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-queue-psc"
+    private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
+    is_manual_connection           = false
+    subresource_names              = ["queue"]
+  }
+
+  lifecycle {
+    ignore_changes = [private_dns_zone_group]
+  }
+
+  tags = var.global_tags
+}
+
+resource "azurerm_private_endpoint" "storage_table" {
+  count               = var.existing_storage_account ? 0 : 1
+  name                = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-table-pe"
+  location            = var.location
+  resource_group_name = var.resource_group
+  subnet_id           = var.storage_private_endpoint_subnet_id
+
+  private_service_connection {
+    name                           = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-table-psc"
+    private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
+    is_manual_connection           = false
+    subresource_names              = ["table"]
   }
 
   lifecycle {
