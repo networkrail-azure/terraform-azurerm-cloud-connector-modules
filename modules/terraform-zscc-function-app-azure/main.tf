@@ -98,17 +98,9 @@ locals {
     "WEBSITE_CONTENTSHARE"                     = lower("${var.name_prefix}-ccvmss-${var.resource_tag}-content")
   } : {}
 
-  # Optional custom DNS servers (e.g. a hub private DNS resolver) so the app
-  # can resolve privatelink records to private endpoint IPs.
-  function_app_dns_settings = merge(
-    length(var.function_app_dns_servers) > 0 ? { "WEBSITE_DNS_SERVER" = var.function_app_dns_servers[0] } : {},
-    length(var.function_app_dns_servers) > 1 ? { "WEBSITE_DNS_ALT_SERVER" = var.function_app_dns_servers[1] } : {},
-  )
-
   function_app_settings = merge(
     local.function_app_base_settings,
     local.function_app_content_settings,
-    local.function_app_dns_settings,
   )
 }
 
@@ -266,13 +258,13 @@ resource "azurerm_private_endpoint" "storage_file" {
 
 resource "azurerm_private_endpoint" "storage_queue" {
   count               = var.existing_storage_account ? 0 : 1
-  name                = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-queue-pe"
+  name                = var.storage_queue_private_endpoint_name
   location            = var.location
   resource_group_name = var.resource_group
   subnet_id           = var.storage_private_endpoint_subnet_id
 
   private_service_connection {
-    name                           = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-queue-psc"
+    name                           = "${var.storage_queue_private_endpoint_name}-psc"
     private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
     is_manual_connection           = false
     subresource_names              = ["queue"]
@@ -280,6 +272,10 @@ resource "azurerm_private_endpoint" "storage_queue" {
 
   lifecycle {
     ignore_changes = [private_dns_zone_group]
+    precondition {
+      condition     = var.storage_queue_private_endpoint_name != null
+      error_message = "var.storage_queue_private_endpoint_name is required when the module creates a new Storage Account (existing_storage_account = false)."
+    }
   }
 
   tags = var.global_tags
@@ -287,13 +283,13 @@ resource "azurerm_private_endpoint" "storage_queue" {
 
 resource "azurerm_private_endpoint" "storage_table" {
   count               = var.existing_storage_account ? 0 : 1
-  name                = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-table-pe"
+  name                = var.storage_table_private_endpoint_name
   location            = var.location
   resource_group_name = var.resource_group
   subnet_id           = var.storage_private_endpoint_subnet_id
 
   private_service_connection {
-    name                           = "${var.name_prefix}-ccvmss-${var.resource_tag}-storage-table-psc"
+    name                           = "${var.storage_table_private_endpoint_name}-psc"
     private_connection_resource_id = azurerm_storage_account.cc_function_storage_account[0].id
     is_manual_connection           = false
     subresource_names              = ["table"]
@@ -301,6 +297,10 @@ resource "azurerm_private_endpoint" "storage_table" {
 
   lifecycle {
     ignore_changes = [private_dns_zone_group]
+    precondition {
+      condition     = var.storage_table_private_endpoint_name != null
+      error_message = "var.storage_table_private_endpoint_name is required when the module creates a new Storage Account (existing_storage_account = false)."
+    }
   }
 
   tags = var.global_tags
