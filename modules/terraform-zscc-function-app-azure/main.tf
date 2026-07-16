@@ -115,19 +115,9 @@ locals {
     "WEBSITE_CONTENTSHARE"                     = local.content_share_name
   } : {}
 
-  # Optional custom DNS servers so the Function App resolves private endpoint
-  # records (e.g. the content file share and storage) via a custom/hub resolver.
-  # Without this, content-over-VNet mounts resolve to the public IP and fail when
-  # Storage public network access is disabled.
-  function_app_dns_settings = merge(
-    length(var.function_app_dns_servers) > 0 ? { "WEBSITE_DNS_SERVER" = var.function_app_dns_servers[0] } : {},
-    length(var.function_app_dns_servers) > 1 ? { "WEBSITE_DNS_ALT_SERVER" = var.function_app_dns_servers[1] } : {},
-  )
-
   function_app_settings = merge(
     local.function_app_base_settings,
     local.function_app_content_settings,
-    local.function_app_dns_settings,
   )
 }
 
