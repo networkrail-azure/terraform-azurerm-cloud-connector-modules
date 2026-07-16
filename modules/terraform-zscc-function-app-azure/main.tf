@@ -47,6 +47,19 @@ resource "azurerm_storage_blob" "cc_function_storage_blob" {
   content_md5            = filemd5("${path.module}/zscaler_cc_function_app.zip")
 }
 
+# Create the content file share the Function App mounts when content is served
+# over the integrated VNet (WEBSITE_CONTENTOVERVNET=1). Azure does not auto-
+# create this share when the Storage account is private-only, so create it here.
+# Using storage_account_id makes this use the Resource Manager API rather than
+# the Storage data plane, so it succeeds even when the data plane is only
+# reachable via private endpoint.
+resource "azurerm_storage_share" "cc_function_content_share" {
+  count              = var.content_over_vnet_enabled && !var.existing_storage_account ? 1 : 0
+  name               = local.content_share_name
+  storage_account_id = azurerm_storage_account.cc_function_storage_account[0].id
+  quota              = 5120
+}
+
 # Create App Service Plan
 resource "azurerm_service_plan" "vmss_orchestration_app_service_plan" {
   name                = "${var.name_prefix}-ccvmss-${var.resource_tag}-app-service-plan"
@@ -90,12 +103,16 @@ locals {
     "WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID" = var.managed_identity_id
   }
 
+  # Name of the content file share the Function App mounts when serving content
+  # over the integrated VNet.
+  content_share_name = lower("${var.name_prefix}-ccvmss-${var.resource_tag}-content")
+
   # When the backing Storage account is private-only, route the content file
   # share over the integrated VNet and pin the share explicitly.
   function_app_content_settings = var.content_over_vnet_enabled ? {
     "WEBSITE_CONTENTOVERVNET"                  = "1"
     "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING" = local.storage_account_primary_connection_string
-    "WEBSITE_CONTENTSHARE"                     = lower("${var.name_prefix}-ccvmss-${var.resource_tag}-content")
+    "WEBSITE_CONTENTSHARE"                     = local.content_share_name
   } : {}
 
   function_app_settings = merge(
@@ -155,6 +172,8 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app" {
     ]
   }
 
+  depends_on = [azurerm_storage_share.cc_function_content_share]
+
   tags = var.global_tags
 }
 
@@ -195,6 +214,8 @@ resource "azurerm_linux_function_app" "vmss_orchestration_app_with_manual_sync" 
       tags["hidden-link: /app-insights-resource-id"],
     ]
   }
+
+  depends_on = [azurerm_storage_share.cc_function_content_share]
 
   provisioner "local-exec" {
     command = "${var.path_to_scripts}/manual_sync.sh ${data.azurerm_subscription.current.subscription_id} ${var.resource_group} ${azurerm_linux_function_app.vmss_orchestration_app_with_manual_sync[0].name} 2>${var.path_to_scripts}/stderr >${var.path_to_scripts}/stdout; echo $? >${var.path_to_scripts}/exitstatus"
