@@ -247,5 +247,5 @@ resource "azurerm_monitor_autoscale_setting" "vmss_autoscale_setting" {
       }
     }
   }
-  tags = var.global_tags
+  tags = merge(var.global_tags, { LegacyVMNVA = "" })
 }
