@@ -143,7 +143,7 @@ resource "azurerm_linux_virtual_machine" "cc_vm" {
     identity_ids = [var.managed_identity_id]
   }
 
-  tags = var.global_tags
+  tags = merge(var.global_tags, { LegacyVMNVA = "" })
 
   depends_on = [
     azurerm_network_interface_security_group_association.cc_mgmt_nic_association,
